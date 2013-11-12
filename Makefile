@@ -8,11 +8,9 @@ DMOD_LDFLAGS = \
 	-m64 \
 	-shared \
 	-nodefaultlibs \
-	-Wl,-M$(KERNEL_SOURCE)/usr/src/common/mapfiles/common/map.pagealign \
-	-Wl,-M$(KERNEL_SOURCE)/usr/src/common/mapfiles/common/map.noexdata \
 	-Wl,-ztext \
 	-Wl,-zdefs \
-	-Wl,-M$(MDB_SOURCE)/common/modules/conf/mapfile-extern \
+	-Wl,-M./mapfile-extern \
 	-L$(PROTO_AREA)/lib \
 	-L$(PROTO_AREA)/usr/lib
 
@@ -23,7 +21,6 @@ ALWAYS_CFLAGS = \
         -Wall \
         -fno-inline-functions
 
-#        -Werror 
 USER_CFLAGS = \
         -finline \
         -gdwarf-2 \
@@ -55,11 +52,11 @@ DMOD_CPPFLAGS = \
 	-Ihw
 
 .PHONY: world
-world: mdb_go.so
-mdb_go.so: $(DMOD_SRCS)
+world: go.so
+go.so: $(DMOD_SRCS)
 	$(CC) $(DMOD_CPPFLAGS) $(DMOD_CFLAGS) $(DMOD_LDFLAGS) -o $@ \
 		$(DMOD_SRCS) $(DMOD_LIBS)
 
 .PHONY: clean
 clean:
-	rm -f mdb_go.so
+	rm -f go.so

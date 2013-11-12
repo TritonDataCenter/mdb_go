@@ -1,7 +1,7 @@
 ## Usage
 
 ```
-> ::load /path/to/mdb_go.so
+> ::load /path/to/go.so
 > ::gostack -p name
 main.sub5()
 main.sub4()
