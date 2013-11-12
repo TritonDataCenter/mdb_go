@@ -31,7 +31,8 @@
 #include "mdb_go_types.h"
 
 static int
-load_current_context(uintptr_t *frameptr, uintptr_t *insptr, uintptr_t *stackptr)
+load_current_context(uintptr_t *frameptr, uintptr_t *insptr,
+    uintptr_t *stackptr)
 {
 	mdb_reg_t regfp, regip, regsp;
 
@@ -114,8 +115,8 @@ typedef struct go_func {
 uintptr_t pclntab;
 uintptr_t ftabsize;
 
-#define	GO_FUNCTABLE_OFFSET	(pclntab + sizeof(struct pctabhdr))
-#define	GO_FUNCTABLE_SIZE	(ftabsize * sizeof(go_functbl_t))
+#define	GO_FUNCTABLE_OFFSET	(pclntab + sizeof (struct pctabhdr))
+#define	GO_FUNCTABLE_SIZE	(ftabsize * sizeof (go_functbl_t))
 
 #define	PC_TAB_OFFSET(x)	(pclntab + x)
 
@@ -125,23 +126,22 @@ uintptr_t ftabsize;
 uintptr_t
 findfunc(uintptr_t addr)
 {
-	go_functbl_t *ftbl; //, *f;
+	go_functbl_t *ftbl;
 	unsigned int nf, n;
 	ssize_t len;
 
-	if (ftabsize == 0) {
-		return NULL;
-	}
+	if (ftabsize == 0)
+		return (NULL);
 
 	ftbl = mdb_alloc(GO_FUNCTABLE_SIZE, UM_SLEEP);
 	len = mdb_vread(ftbl, GO_FUNCTABLE_SIZE, GO_FUNCTABLE_OFFSET);
-	if (len == -1) {
-		return NULL;
-	}
+
+	if (len == -1)
+		return (NULL);
 
 	if (addr < ftbl[0].entry || addr >= ftbl[ftabsize - 1].entry) {
 		mdb_free(ftbl, GO_FUNCTABLE_SIZE);
-		return NULL;
+		return (NULL);
 	}
 
 	nf = ftabsize;
@@ -149,7 +149,7 @@ findfunc(uintptr_t addr)
 	while (nf > 0) {
 		n = nf/2;
 		if (ftbl[n].entry <= addr && addr < ftbl[n+1].entry) {
-			return ftbl[n].offset;
+			return (ftbl[n].offset);
 		} else if (addr < ftbl[n].entry)
 			nf = n;
 		else {
@@ -160,7 +160,7 @@ findfunc(uintptr_t addr)
 
 	mdb_warn("unable to find go function at 0x%x\n", addr);
 	mdb_free(ftbl, GO_FUNCTABLE_SIZE);
-	return NULL;
+	return (NULL);
 }
 
 static int
@@ -176,12 +176,12 @@ do_goframe(uintptr_t addr, char *prop)
 		return (DCMD_ERR);
 	}
 
-	len = mdb_vread(&f, sizeof(go_func_t), PC_TAB_OFFSET(offset));
+	len = mdb_vread(&f, sizeof (go_func_t), PC_TAB_OFFSET(offset));
 	if (len == -1) {
 		mdb_warn("Could not load function from function table\n");
 		return (DCMD_ERR);
 	}
-	len = mdb_vread(&buf, sizeof(buf), PC_TAB_OFFSET(f.nameoff));
+	len = mdb_vread(&buf, sizeof (buf), PC_TAB_OFFSET(f.nameoff));
 	if (prop != NULL && strcmp(prop, "name") == 0) {
 		mdb_printf("%s()\n", buf);
 		return (DCMD_OK);
@@ -218,7 +218,7 @@ dcmd_goframe(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 			return (DCMD_ERR);
 	}
 
-	if (mdb_vread(&p, sizeof(p), addr) == -1) {
+	if (mdb_vread(&p, sizeof (p), addr) == -1) {
 		mdb_warn("Could not load function from function table\n");
 		return (DCMD_ERR);
 	}
@@ -254,13 +254,13 @@ walk_goframes_step(mdb_walk_state_t *wsp)
 	if (rv != WALK_NEXT)
 		return (rv);
 
-	len = mdb_vread(&p, sizeof(p), addr);
+	len = mdb_vread(&p, sizeof (p), addr);
 	offset = findfunc(p);
 	if (offset == NULL) {
 		return (DCMD_ERR);
 	}
 
-	len = mdb_vread(&f, sizeof(go_func_t), PC_TAB_OFFSET(offset));
+	len = mdb_vread(&f, sizeof (go_func_t), PC_TAB_OFFSET(offset));
 	if (len == -1) {
 		mdb_warn("Could not load function from function table\n");
 		return (DCMD_ERR);
@@ -354,16 +354,18 @@ dcmd_go_g(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	mdb_printf("      flags: %s %s %s\n", g.ispanic ? "panic" : "!panic",
 	    g.issystem ? "system" : "!system",
 	    g.isbackground ? "background" : "!background");
-	mdb_printf("      create_pc %p\n", g.gopc);
+	mdb_printf("      create_pc %p (%a)\n", g.gopc, g.gopc);
+
 	if (g.status == GS_Gsyscall) {
 		mdb_printf("     stackbase: %p\n", g.syscallstack);
 		mdb_printf("            sp: %p\n", g.syscallsp);
-		mdb_printf("            pc: %p\n", g.syscallpc);
+		mdb_printf("            pc: %p (%a)\n",
+		    g.syscallpc, g.syscallpc);
 		mdb_printf("    stackguard: %p\n", g.syscallguard);
 	} else {
 		mdb_printf("     stackbase: %p\n", g.stackbase);
 		mdb_printf("            sp: %p\n", g.sched.sp);
-		mdb_printf("            pc: %p\n", g.sched.pc);
+		mdb_printf("            pc: %p (%a)\n", g.sched.pc, g.sched.pc);
 		mdb_printf("    stackguard: %p\n", g.stackguard);
 	}
 
@@ -566,7 +568,8 @@ dcmd_go_timers(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	mdb_printf("  goroutine %p\n", timers.timerproc);
 	mdb_printf("  len %d cap %d\n", timers.len, timers.cap);
 	mdb_printf("  t %p\n", timers.t);
-	mdb_printf("  sleeping %d resched %d\n", timers.sleeping, timers.rescheduling);
+	mdb_printf("  sleeping %d resched %d\n",
+	    timers.sleeping, timers.rescheduling);
 
 	for (i = 0; i < timers.len; i++) {
 		uintptr_t ttt;
@@ -584,7 +587,8 @@ dcmd_go_timers(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 			continue;
 		}
 
-		mdb_printf("      when %lld period %lld\n", timer.when, timer.period);
+		mdb_printf("      when %lld period %lld\n",
+		    timer.when, timer.period);
 	}
 
 	return (DCMD_OK);
@@ -605,14 +609,14 @@ configure(void)
 
 	pclntab = sym.st_value;
 
-	if (mdb_vread(&phdr, sizeof(struct pctabhdr), pclntab) == -1) {
+	if (mdb_vread(&phdr, sizeof (struct pctabhdr), pclntab) == -1) {
 		mdb_warn("Could not load pclntab header\n");
 		return;
 	}
 
 	if (phdr.magic != 0xfffffffb || phdr.zeros != 0 ||
 	    phdr.quantum != GO_PC_QUANTUM ||
-	    phdr.ptrsize != sizeof(uintptr_t *)) {
+	    phdr.ptrsize != sizeof (uintptr_t *)) {
 		mdb_warn("invalid pclntab header\n");
 		return;
 	}
@@ -623,8 +627,10 @@ configure(void)
 }
 
 static const mdb_dcmd_t go_mdb_dcmds[] = {
-	{ "gostack", "[-p property]", "print a Go stack trace", dcmd_gostack, NULL },
-	{ "goframe", "[-p property]", "print a Go stack frame", dcmd_goframe, NULL },
+	{ "gostack", "[-p property]", "print a Go stack trace",
+	    dcmd_gostack, NULL },
+	{ "goframe", "[-p property]", "print a Go stack frame",
+	    dcmd_goframe, NULL },
 	{ "go_g", "...",
 		"print some stuff about a G", dcmd_go_g },
 	{ "go_p", "...",
@@ -648,7 +654,8 @@ static const mdb_walker_t go_mdb_walkers[] = {
 	{ NULL }
 };
 
-static const mdb_modinfo_t go_mdb = { MDB_API_VERSION, go_mdb_dcmds, go_mdb_walkers };
+static const mdb_modinfo_t go_mdb =
+    { MDB_API_VERSION, go_mdb_dcmds, go_mdb_walkers };
 
 const mdb_modinfo_t *
 _mdb_init(void)
