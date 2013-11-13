@@ -1,6 +1,3 @@
-PROTO_AREA=	${HOME}/smartos-live/proto
-KERNEL_SOURCE=	${HOME}/smartos-live/projects/illumos
-MDB_SOURCE=	$(KERNEL_SOURCE)/usr/src/cmd/mdb
 DMOD_SRCS=	mdb_go.c
 DMOD_LIBS=	-lc
 
@@ -10,9 +7,7 @@ DMOD_LDFLAGS = \
 	-nodefaultlibs \
 	-Wl,-ztext \
 	-Wl,-zdefs \
-	-Wl,-M./mapfile-extern \
-	-L$(PROTO_AREA)/lib \
-	-L$(PROTO_AREA)/usr/lib
+	-Wl,-M./mapfile-extern
 
 ALWAYS_CFLAGS = \
         -fident \
@@ -47,7 +42,6 @@ DMOD_CPPFLAGS = \
 	-D_ELF64 \
 	-Ui386 \
 	-U__i386 \
-	-isystem $(PROTO_AREA)/usr/include \
 	-I. \
 	-Ihw
 
