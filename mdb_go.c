@@ -484,6 +484,8 @@ dcmd_go_m(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	mdb_printf("    p %p nextp %p\n", m.p, m.nextp);
 	mdb_printf("    curg %p\n", m.curg);
 	mdb_printf("    gsignal %p caughtsig %p\n", m.gsignal, m.caughtsig);
+	mdb_printf("    libcall %p (fn %a, n %d)\n", addr +
+	    (uintptr_t)&m.libcall - (uintptr_t)&m, m.libcall.fn, m.libcall.n);
 
 	return (DCMD_OK);
 }
