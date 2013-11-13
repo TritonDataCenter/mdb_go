@@ -26,6 +26,7 @@
  * mdb(1M) module for debugging Go.
  */
 
+#include <stdlib.h>
 #include <sys/mdb_modapi.h>
 
 #include "mdb_go_types.h"
@@ -385,6 +386,7 @@ dcmd_go_m(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	mdb_printf("%p: gomach %d\n", addr, m.id);
 	mdb_printf("    p %p nextp %p\n", m.p, m.nextp);
 	mdb_printf("    curg %p\n", m.curg);
+	mdb_printf("    gsignal %p caughtsig %p\n", m.gsignal, m.caughtsig);
 
 	return (DCMD_OK);
 }
@@ -546,6 +548,73 @@ walk_go_p_step(mdb_walk_state_t *wsp)
 }
 
 static int
+dcmd_go_sigtab(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	GElf_Sym sym;
+	SigTab sigtab[73];
+	int i;
+	int start, stop;
+
+	if (mdb_lookup_by_name("runtime.sigtab", &sym) != 0) {
+		mdb_warn("could not find sigtab");
+		return (DCMD_ERR);
+	}
+
+	if (mdb_vread(&sigtab, sizeof (sigtab), sym.st_value) == -1) {
+		mdb_warn("failed to read sigtab");
+		return (DCMD_ERR);
+	}
+
+	if (argc >= 1) {
+		if (argv[0].a_type != MDB_TYPE_STRING) {
+			mdb_warn("arg was not string type\n");
+			return (DCMD_ERR);
+		}
+		stop = start = atoi(argv[0].a_un.a_str);
+	} else {
+		start = 0;
+		stop = 72;
+	}
+
+	mdb_printf("printing sigtab:\n");
+	for (i = start; i <= stop; i++) {
+		int printed = 0;
+		char buf[500];
+		ssize_t sz;
+
+		if ((sz = mdb_readstr(buf, 500, (uintptr_t)sigtab[i].name)) == -1) {
+			mdb_warn("could not read");
+			continue;
+		}
+
+		mdb_printf("    [%d] %s\n", i, buf);
+		/*
+		 * Print flags:
+		 */
+		mdb_printf("       flags:  ");
+		if (sigtab[i].flags == 0)
+			mdb_printf("%s%s", printed++ ? " | " : "", "NONE");
+		if (sigtab[i].flags & SigNotify)
+			mdb_printf("%s%s", printed++ ? " | " : "", "NOTIFY");
+		if (sigtab[i].flags & SigKill)
+			mdb_printf("%s%s", printed++ ? " | " : "", "KILL");
+		if (sigtab[i].flags & SigThrow)
+			mdb_printf("%s%s", printed++ ? " | " : "", "THROW");
+		if (sigtab[i].flags & SigPanic)
+			mdb_printf("%s%s", printed++ ? " | " : "", "PANIC");
+		if (sigtab[i].flags & SigDefault)
+			mdb_printf("%s%s", printed++ ? " | " : "", "DEFAULT");
+		if (sigtab[i].flags & SigHandling)
+			mdb_printf("%s%s", printed++ ? " | " : "", "HANDLING");
+		if (sigtab[i].flags & SigIgnored)
+			mdb_printf("%s%s", printed++ ? " | " : "", "IGNORED");
+		mdb_printf("\n");
+	}
+
+	return (DCMD_OK);
+}
+
+static int
 dcmd_go_timers(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
 	GElf_Sym sym;
@@ -639,6 +708,8 @@ static const mdb_dcmd_t go_mdb_dcmds[] = {
 		"print some stuff about a M", dcmd_go_m },
 	{ "go_timers", "...",
 		"print some stuff about a Timer", dcmd_go_timers },
+	{ "go_sigtab", "...",
+		"print some stuff about the SigTab", dcmd_go_sigtab },
 	{ NULL }
 };
 

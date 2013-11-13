@@ -16,6 +16,7 @@ typedef struct Panic Panic;
 typedef struct LibCall LibCall;
 typedef struct SEH SEH;
 typedef struct GCStats GCStats;
+typedef struct SigTab SigTab;
 
 enum {
         GS_Gidle,
@@ -40,6 +41,21 @@ enum {
         StackCacheSize = 32,
         // Global <-> per-M stack segment cache transfer batch size.
         StackCacheBatch = 16,
+};
+
+enum {
+        SigNotify = 1<<0,       // let signal.Notify have signal, even if from kernel
+        SigKill = 1<<1,         // if signal.Notify doesn't take it, exit quietly
+        SigThrow = 1<<2,        // if signal.Notify doesn't take it, exit loudly
+        SigPanic = 1<<3,        // if the signal is from the kernel, panic
+        SigDefault = 1<<4,      // if the signal isn't explicitly requested, don't monitor it
+        SigHandling = 1<<5,     // our signal handler is registered
+        SigIgnored = 1<<6,      // the signal was ignored before we registered for it
+};
+
+struct SigTab {
+	int32_t flags;
+	int8_t *name;
 };
 
 struct GCStats {
