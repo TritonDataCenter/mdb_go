@@ -54,6 +54,12 @@ DMOD_CPPFLAGS = \
 	-I. \
 	-Ihw
 
+.PHONY: world
+world: mdb_go.so
 mdb_go.so: $(DMOD_SRCS)
 	$(CC) $(DMOD_CPPFLAGS) $(DMOD_CFLAGS) $(DMOD_LDFLAGS) -o $@ \
 		$(DMOD_SRCS) $(DMOD_LIBS)
+
+.PHONY: clean
+clean:
+	rm -f mdb_go.so

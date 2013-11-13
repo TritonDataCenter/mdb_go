@@ -28,6 +28,8 @@
 
 #include <sys/mdb_modapi.h>
 
+#include "mdb_go_types.h"
+
 static int
 load_current_context(uintptr_t *frameptr, uintptr_t *insptr, uintptr_t *stackptr)
 {
@@ -295,6 +297,300 @@ dcmd_gostack(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (DCMD_OK);
 }
 
+static const char *
+mdb_go_g_status(int16_t status)
+{
+	return (status == GS_Gidle ? "Gidle" :
+	    status == GS_Grunnable ? "Grunnable" :
+	    status == GS_Grunning ? "Grunning" :
+	    status == GS_Gsyscall ? "Gsyscall" :
+	    status == GS_Gwaiting ? "Gwaiting" :
+	    status == GS_Gmoribund_unused ? "Gmoribund_unused" :
+	    status == GS_Gdead ? "Gdead" :
+	    "<UNKNOWN>");
+}
+
+static const char *
+mdb_go_p_status(int16_t status)
+{
+	return (status == PS_Pidle ? "Pidle" :
+	    status == PS_Prunning ? "Prunning" :
+	    status == PS_Psyscall ? "Psyscall" :
+	    status == PS_Pgcstop ? "Pgcstop" :
+	    status == PS_Pdead ? "Pdead" :
+	    "<UNKNOWN>");
+}
+
+static int
+dcmd_go_p(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	P p;
+
+	if (mdb_vread(&p, sizeof (p), addr) == -1) {
+		mdb_warn("failed to read P from %p", addr);
+		return (DCMD_ERR);
+	}
+
+	mdb_printf("%p: goproc %d [%s]\n", addr, p.id,
+	    mdb_go_p_status(p.status));
+	mdb_printf("    runqsz %d\n", p.runqsize);
+	mdb_printf("    m %p\n", p.m);
+
+	return (DCMD_OK);
+}
+
+static int
+dcmd_go_g(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	G g;
+
+	if (mdb_vread(&g, sizeof (g), addr) == -1) {
+		mdb_warn("failed to read G from %p", addr);
+		return (DCMD_ERR);
+	}
+
+	mdb_printf("%p: goroutine %d [%s]\n", addr, g.goid,
+	    mdb_go_g_status(g.status));
+	mdb_printf("      flags: %s %s %s\n", g.ispanic ? "panic" : "!panic",
+	    g.issystem ? "system" : "!system",
+	    g.isbackground ? "background" : "!background");
+	mdb_printf("      create_pc %p\n", g.gopc);
+	if (g.status == GS_Gsyscall) {
+		mdb_printf("     stackbase: %p\n", g.syscallstack);
+		mdb_printf("            sp: %p\n", g.syscallsp);
+		mdb_printf("            pc: %p\n", g.syscallpc);
+		mdb_printf("    stackguard: %p\n", g.syscallguard);
+	} else {
+		mdb_printf("     stackbase: %p\n", g.stackbase);
+		mdb_printf("            sp: %p\n", g.sched.sp);
+		mdb_printf("            pc: %p\n", g.sched.pc);
+		mdb_printf("    stackguard: %p\n", g.stackguard);
+	}
+
+	return (DCMD_OK);
+}
+
+static int
+dcmd_go_m(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	M m;
+
+	if (mdb_vread(&m, sizeof (m), addr) == -1) {
+		mdb_warn("failed to read M from %p", addr);
+		return (DCMD_ERR);
+	}
+
+	mdb_printf("%p: gomach %d\n", addr, m.id);
+	mdb_printf("    p %p nextp %p\n", m.p, m.nextp);
+	mdb_printf("    curg %p\n", m.curg);
+
+	return (DCMD_OK);
+}
+
+static int
+walk_go_g_init(mdb_walk_state_t *wsp)
+{
+	GElf_Sym sym;
+	uintptr_t allg;
+
+	if (wsp->walk_addr != NULL)
+		return (WALK_NEXT);
+
+	if (mdb_lookup_by_name("runtime.allg", &sym) != 0) {
+		mdb_warn("could not find runtime.allg");
+		return (WALK_ERR);
+	}
+
+	if (mdb_vread(&allg, sizeof (allg), sym.st_value) == -1) {
+		mdb_warn("could not load runtime.allg");
+		return (WALK_ERR);
+	}
+
+	wsp->walk_addr = allg;
+
+	return (WALK_NEXT);
+}
+
+static int
+walk_go_g_step(mdb_walk_state_t *wsp)
+{
+	uintptr_t addr;
+	int rv;
+	G g;
+
+	addr = wsp->walk_addr;
+	rv = wsp->walk_callback(wsp->walk_addr, NULL, wsp->walk_cbdata);
+
+	if (rv != WALK_NEXT)
+		return (rv);
+
+	/*
+	 * Load this G to get the next G
+	 */
+	if (mdb_vread(&g, sizeof (g), addr) == -1) {
+		mdb_warn("could not read next P pointer");
+		return (WALK_ERR);
+	}
+
+	if (g.alllink == NULL)
+		return (WALK_DONE);
+	wsp->walk_addr = (uintptr_t) g.alllink;
+
+	return (WALK_NEXT);
+}
+
+static int
+walk_go_m_init(mdb_walk_state_t *wsp)
+{
+	GElf_Sym sym;
+	uintptr_t allm;
+
+	if (wsp->walk_addr != NULL)
+		return (WALK_NEXT);
+
+	if (mdb_lookup_by_name("runtime.allm", &sym) != 0) {
+		mdb_warn("could not find runtime.allm");
+		return (WALK_ERR);
+	}
+
+	if (mdb_vread(&allm, sizeof (allm), sym.st_value) == -1) {
+		mdb_warn("could not load runtime.allm");
+		return (WALK_ERR);
+	}
+
+	wsp->walk_addr = allm;
+
+	return (WALK_NEXT);
+}
+
+static int
+walk_go_m_step(mdb_walk_state_t *wsp)
+{
+	uintptr_t addr;
+	int rv;
+	M m;
+
+	addr = wsp->walk_addr;
+	rv = wsp->walk_callback(wsp->walk_addr, NULL, wsp->walk_cbdata);
+
+	if (rv != WALK_NEXT)
+		return (rv);
+
+	/*
+	 * Load this M to get the next M
+	 */
+	if (mdb_vread(&m, sizeof (m), addr) == -1) {
+		mdb_warn("could not read next M pointer");
+		return (WALK_ERR);
+	}
+
+	if (m.alllink == NULL)
+		return (WALK_DONE);
+	wsp->walk_addr = (uintptr_t) m.alllink;
+
+	return (WALK_NEXT);
+}
+
+static int
+walk_go_p_init(mdb_walk_state_t *wsp)
+{
+	GElf_Sym sym;
+	uintptr_t allp;
+
+	if (wsp->walk_addr != NULL)
+		return (WALK_NEXT);
+
+	if (mdb_lookup_by_name("runtime.allp", &sym) != 0) {
+		mdb_warn("could not find runtime.allp");
+		return (WALK_ERR);
+	}
+
+	if (mdb_vread(&allp, sizeof (allp), sym.st_value) == -1) {
+		mdb_warn("could not load runtime.allp");
+		return (WALK_ERR);
+	}
+
+	wsp->walk_addr = allp;
+
+	return (WALK_NEXT);
+}
+
+static int
+walk_go_p_step(mdb_walk_state_t *wsp)
+{
+	uintptr_t addr;
+	int rv;
+	P p;
+
+	addr = wsp->walk_addr;
+	rv = wsp->walk_callback(wsp->walk_addr, NULL, wsp->walk_cbdata);
+
+	if (rv != WALK_NEXT)
+		return (rv);
+
+	/*
+	 * Load this P to get the next P
+	 */
+	if (mdb_vread(&p, sizeof (p), addr) == -1) {
+		mdb_warn("could not read next P pointer");
+		return (WALK_ERR);
+	}
+
+	if (p.link == NULL)
+		return (WALK_DONE);
+	wsp->walk_addr = (uintptr_t) p.link;
+
+	return (WALK_NEXT);
+}
+
+static int
+dcmd_go_timers(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	GElf_Sym sym;
+	Timers timers;
+	Timer timer;
+	uintptr_t taddr;
+	int i;
+
+	if (mdb_lookup_by_name("timers", &sym) != 0) {
+		mdb_warn("could not find timers");
+		return (DCMD_ERR);
+	}
+
+	if (mdb_vread(&timers, sizeof (timers), sym.st_value) == -1) {
+		mdb_warn("failed to read Timers from %p", addr);
+		return (DCMD_ERR);
+	}
+
+	mdb_printf("go timers:\n");
+	mdb_printf("  goroutine %p\n", timers.timerproc);
+	mdb_printf("  len %d cap %d\n", timers.len, timers.cap);
+	mdb_printf("  t %p\n", timers.t);
+	mdb_printf("  sleeping %d resched %d\n", timers.sleeping, timers.rescheduling);
+
+	for (i = 0; i < timers.len; i++) {
+		uintptr_t ttt;
+
+		taddr = (uintptr_t)timers.t;
+		taddr += (sizeof (void*)) * i;
+
+		if (mdb_vread(&ttt, sizeof (uintptr_t), taddr) == -1) {
+			mdb_warn("could not");
+			continue;
+		}
+
+		if (mdb_vread(&timer, sizeof (timer), ttt) == -1) {
+			mdb_warn("could not");
+			continue;
+		}
+
+		mdb_printf("      when %lld period %lld\n", timer.when, timer.period);
+	}
+
+	return (DCMD_OK);
+}
+
+
 static void
 configure(void)
 {
@@ -329,12 +625,26 @@ configure(void)
 static const mdb_dcmd_t go_mdb_dcmds[] = {
 	{ "gostack", "[-p property]", "print a Go stack trace", dcmd_gostack, NULL },
 	{ "goframe", "[-p property]", "print a Go stack frame", dcmd_goframe, NULL },
+	{ "go_g", "...",
+		"print some stuff about a G", dcmd_go_g },
+	{ "go_p", "...",
+		"print some stuff about a P", dcmd_go_p },
+	{ "go_m", "...",
+		"print some stuff about a M", dcmd_go_m },
+	{ "go_timers", "...",
+		"print some stuff about a Timer", dcmd_go_timers },
 	{ NULL }
 };
 
 static const mdb_walker_t go_mdb_walkers[] = {
 	{ "goframe", "walk Go stack frames",
 		walk_goframes_init, walk_goframes_step },
+	{ "go_g", "walk all G",
+		walk_go_g_init, walk_go_g_step },
+	{ "go_p", "walk all P",
+		walk_go_p_init, walk_go_p_step },
+	{ "go_m", "walk all M",
+		walk_go_m_init, walk_go_m_step },
 	{ NULL }
 };
 
