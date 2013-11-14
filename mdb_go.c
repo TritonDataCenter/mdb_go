@@ -240,10 +240,10 @@ pcvalue(go_func_t *f, int32_t off, uintptr_t targetpc)
 }
 
 static int
-do_goframe(uintptr_t addr, char *prop)
+do_goframe(uintptr_t addr, uintptr_t sp, char *prop)
 {
-	uintptr_t offset;
-	uint32_t file, fileoff, lineno;
+	uintptr_t offset, arg;
+	uint32_t file, fileoff, lineno, spdelta, arglen, i;
 	char funcname[512], filename[512]; // XXX
 	go_func_t f, *fp;
 
@@ -261,6 +261,11 @@ do_goframe(uintptr_t addr, char *prop)
 	fp = &f;
 	file = pcvalue(fp, fp->pcfile, addr);
 	lineno = pcvalue(fp, fp->pcln, addr);
+	spdelta = pcvalue(fp, fp->pcsp, addr);
+	if (addr == fp->entry)
+		arglen = 0;
+	else
+		arglen = pcvalue(fp, (&fp->nfuncdata)[1], addr - GO_PC_QUANTUM);
 
 	if (mdb_vread(&funcname, sizeof (funcname),
 	    GO_PCLNTAB_OFFSET(f.nameoff)) == -1) {
@@ -281,7 +286,12 @@ do_goframe(uintptr_t addr, char *prop)
 	}
 
 	if (prop != NULL && strcmp(prop, "name") == 0) {
-		mdb_printf("%s()\n", funcname);
+		mdb_printf("%s(", funcname);
+		for (i = 1; i < (spdelta / sizeof (uintptr_t)); i++) {
+			mdb_vread(&arg, sizeof (arg), sp + (i * sizeof (uintptr_t)));
+			mdb_printf("%s0x%x", i == 1 ? "" : ", ", arg);
+		}
+		mdb_printf(")\n", funcname);
 		return (DCMD_OK);
 	}
 
@@ -289,9 +299,9 @@ do_goframe(uintptr_t addr, char *prop)
 	mdb_inc_indent(8);
 	mdb_printf("entry = %p,\n", f.entry);
 	mdb_printf("nameoff = %p (%s),\n", f.nameoff, funcname);
-	mdb_printf("args = %p,\n", f.args);
+	mdb_printf("args = %p (len=%d),\n", f.args, (arglen / sizeof (uintptr_t)));
 	mdb_printf("frame = %p,\n", f.frame);
-	mdb_printf("pcsp = %p,\n", f.pcsp);
+	mdb_printf("pcsp = %p (delta=%d),\n", f.pcsp, spdelta);
 	mdb_printf("pcfile = %p (%s),\n", f.pcfile, filename);
 	mdb_printf("pcln = %p (%d),\n", f.pcln, lineno);
 	mdb_printf("npcdata = %p,\n", f.npcdata);
@@ -321,7 +331,7 @@ dcmd_goframe(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		return (DCMD_ERR);
 	}
 
-	do_goframe(p, opt_p);
+	do_goframe(p, addr, opt_p);
 
 	return (DCMD_OK);
 }
@@ -387,7 +397,7 @@ dcmd_gostack(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 
 	load_current_context(&addr, &insptr, &stkptr);
 
-	do_goframe(insptr, opt_p);
+	do_goframe(insptr, stkptr, opt_p);
 
 	if (mdb_pwalk_dcmd("goframe", "goframe", argc, argv, stkptr) == -1)
 		return (DCMD_ERR);
