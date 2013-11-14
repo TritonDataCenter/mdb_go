@@ -243,7 +243,7 @@ static int
 do_goframe(uintptr_t addr, uintptr_t sp, char *prop)
 {
 	uintptr_t offset, arg;
-	uint32_t file, fileoff, lineno, spdelta, arglen, i;
+	uint32_t file, fileoff, lineno, spdelta, i;
 	char funcname[512], filename[512]; // XXX
 	go_func_t f, *fp;
 
@@ -262,10 +262,6 @@ do_goframe(uintptr_t addr, uintptr_t sp, char *prop)
 	file = pcvalue(fp, fp->pcfile, addr);
 	lineno = pcvalue(fp, fp->pcln, addr);
 	spdelta = pcvalue(fp, fp->pcsp, addr);
-	if (addr == fp->entry)
-		arglen = 0;
-	else
-		arglen = pcvalue(fp, (&fp->nfuncdata)[1], addr - GO_PC_QUANTUM);
 
 	if (mdb_vread(&funcname, sizeof (funcname),
 	    GO_PCLNTAB_OFFSET(f.nameoff)) == -1) {
@@ -287,7 +283,7 @@ do_goframe(uintptr_t addr, uintptr_t sp, char *prop)
 
 	if (prop != NULL && strcmp(prop, "name") == 0) {
 		mdb_printf("%s(", funcname);
-		for (i = 1; i < (spdelta / sizeof (uintptr_t)); i++) {
+		for (i = 1; i <= (f.args / sizeof (uintptr_t)); i++) {
 			mdb_vread(&arg, sizeof (arg), sp + (i * sizeof (uintptr_t)));
 			mdb_printf("%s0x%x", i == 1 ? "" : ", ", arg);
 		}
@@ -299,7 +295,7 @@ do_goframe(uintptr_t addr, uintptr_t sp, char *prop)
 	mdb_inc_indent(8);
 	mdb_printf("entry = %p,\n", f.entry);
 	mdb_printf("nameoff = %p (%s),\n", f.nameoff, funcname);
-	mdb_printf("args = %p (len=%d),\n", f.args, (arglen / sizeof (uintptr_t)));
+	mdb_printf("args = %p (len=%d),\n", f.args, (f.args / sizeof (uintptr_t)));
 	mdb_printf("frame = %p,\n", f.frame);
 	mdb_printf("pcsp = %p (delta=%d),\n", f.pcsp, spdelta);
 	mdb_printf("pcfile = %p (%s),\n", f.pcfile, filename);
