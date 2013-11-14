@@ -115,11 +115,16 @@ typedef struct go_func {
  */
 uintptr_t pclntab;
 uintptr_t ftabsize;
+uint32_t filetab;
 
 #define	GO_FUNCTABLE_OFFSET	(pclntab + sizeof (struct pctabhdr))
 #define	GO_FUNCTABLE_SIZE	(ftabsize * sizeof (go_functbl_t))
 
-#define	PC_TAB_OFFSET(x)	(pclntab + x)
+#define	GO_FILETABLE_OFFSET	\
+	(GO_FUNCTABLE_OFFSET + (ftabsize * sizeof (go_functbl_t)))
+
+#define	GO_PCLNTAB_OFFSET(x)	(pclntab + x)
+#define	GO_FILETAB_OFFSET(x)	(filetab + (x * sizeof(filetab)))
 
 /*
  * Find a corresponding function to an address in the ftab.
@@ -164,43 +169,135 @@ findfunc(uintptr_t addr)
 	return (NULL);
 }
 
+static uint32_t
+readvarint(unsigned char **pp)
+{
+	unsigned char *p;
+	uint32_t v;
+	int32_t shift;
+
+	v = 0;
+	p = *pp;
+
+	for (shift = 0; ; shift += 7) {
+		v |= (*p & 0x7F) << shift;
+		if (!(*p++ & 0x80))
+			break;
+	}
+
+	*pp = p;
+	return v;
+}
+
+static int
+step(unsigned char **pp, uintptr_t *pc, int32_t *value, int first)
+{
+	uint32_t uvdelta, pcdelta;
+	int32_t vdelta;
+
+	uvdelta = readvarint(pp);
+
+	if (uvdelta == 0 && !first)
+		return 0;
+	if (uvdelta & 1)
+		uvdelta = ~(uvdelta >> 1);
+	else
+		uvdelta >>= 1;
+
+	vdelta = (int32_t)uvdelta;
+	pcdelta = readvarint(pp) * GO_PC_QUANTUM;
+	*value += vdelta;
+	*pc += pcdelta;
+	return 1;
+}
+
+static int32_t
+pcvalue(go_func_t *f, int32_t off, uintptr_t targetpc)
+{
+	unsigned char *p;
+	uintptr_t pc, val;
+	int32_t value;
+	ssize_t len;
+
+	if (off == 0)
+		return -1;
+
+	len = mdb_vread(&val, sizeof(val), pclntab + off);
+	if (len == -1) {
+		mdb_warn("Unable to read pcvalue\n");
+		return -1;
+	}
+
+	p = (unsigned char *)&val;
+	pc = f->entry;
+	value = -1;
+
+	while (step(&p, &pc, &value, pc == f->entry)) {
+		if (targetpc < pc)
+			return value;
+	}
+	return -1;
+}
+
 static int
 do_goframe(uintptr_t addr, char *prop)
 {
 	uintptr_t offset;
-	char buf[512]; // XXX
-	go_func_t f;
-	ssize_t len;
+	uint32_t file, fileoff, lineno;
+	char funcname[512], filename[512]; // XXX
+	go_func_t f, *fp;
 
 	offset = findfunc(addr);
 	if (offset == NULL) {
 		return (DCMD_ERR);
 	}
 
-	len = mdb_vread(&f, sizeof (go_func_t), PC_TAB_OFFSET(offset));
-	if (len == -1) {
+	if (mdb_vread(&f, sizeof (go_func_t),
+	    GO_PCLNTAB_OFFSET(offset)) == -1) {
 		mdb_warn("Could not load function from function table\n");
 		return (DCMD_ERR);
 	}
-	len = mdb_vread(&buf, sizeof (buf), PC_TAB_OFFSET(f.nameoff));
+
+	fp = &f;
+	file = pcvalue(fp, fp->pcfile, addr);
+	lineno = pcvalue(fp, fp->pcln, addr);
+
+	if (mdb_vread(&funcname, sizeof (funcname),
+	    GO_PCLNTAB_OFFSET(f.nameoff)) == -1) {
+		mdb_warn("Could not read function name\n");
+		return (DCMD_ERR);
+	}
+
+	if (mdb_vread(&fileoff, sizeof (fileoff),
+	    GO_FILETAB_OFFSET(file)) == -1) {
+		mdb_warn("Could not load filename offset\n");
+		return (DCMD_ERR);
+	}
+
+	if (mdb_vread(&filename, sizeof (filename),
+	    GO_PCLNTAB_OFFSET(fileoff)) == -1) {
+		mdb_warn("Could not load filename\n");
+		return (DCMD_ERR);
+	}
+
 	if (prop != NULL && strcmp(prop, "name") == 0) {
-		mdb_printf("%s()\n", buf);
+		mdb_printf("%s()\n", funcname);
 		return (DCMD_OK);
 	}
+
 	mdb_printf("%p = {\n", f);
 	mdb_inc_indent(8);
 	mdb_printf("entry = %p,\n", f.entry);
-	mdb_printf("nameoff = %p (name = %s),\n", f.nameoff, buf);
+	mdb_printf("nameoff = %p (%s),\n", f.nameoff, funcname);
 	mdb_printf("args = %p,\n", f.args);
 	mdb_printf("frame = %p,\n", f.frame);
 	mdb_printf("pcsp = %p,\n", f.pcsp);
-	mdb_printf("pcfile = %p,\n", f.pcfile);
-	mdb_printf("pcln = %p,\n", f.pcln);
+	mdb_printf("pcfile = %p (%s),\n", f.pcfile, filename);
+	mdb_printf("pcln = %p (%d),\n", f.pcln, lineno);
 	mdb_printf("npcdata = %p,\n", f.npcdata);
 	mdb_printf("nfuncdata = %p,\n", f.nfuncdata);
 	mdb_dec_indent(8);
 	mdb_printf("}\n");
-
 	return (DCMD_OK);
 }
 
@@ -261,7 +358,7 @@ walk_goframes_step(mdb_walk_state_t *wsp)
 		return (DCMD_ERR);
 	}
 
-	len = mdb_vread(&f, sizeof (go_func_t), PC_TAB_OFFSET(offset));
+	len = mdb_vread(&f, sizeof (go_func_t), GO_PCLNTAB_OFFSET(offset));
 	if (len == -1) {
 		mdb_warn("Could not load function from function table\n");
 		return (DCMD_ERR);
@@ -669,6 +766,7 @@ configure(void)
 {
 	GElf_Sym sym;
 	struct pctabhdr phdr;
+	go_functbl_t ftbl;
 
 	/*
 	 * Load and check pclntab header.
@@ -691,6 +789,16 @@ configure(void)
 	}
 
 	ftabsize = phdr.tabsize;
+
+	/*
+	 * The file table is stored in the offset of the final PC.
+	 */
+	if (mdb_vread(&ftbl, sizeof (ftbl), GO_FILETABLE_OFFSET) == -1) {
+		mdb_warn("Could not read pcvalue table offset\n");
+		return;
+	}
+
+	filetab = GO_PCLNTAB_OFFSET((uint32_t)ftbl.offset);
 
 	mdb_printf("Configured Go support\n");
 }
