@@ -116,8 +116,10 @@ struct Panic {
         uintptr_t stackbase;      // g->stackbase in panic
         Panic*  link;           // link to earlier panic
         uint8_t    recovered;      // whether this panic is over
+        uint8_t    aborted;        // the panic was aborted
 };
 
+// G - goroutine.
 struct G {
         // stackguard0 can be set to StackPreempt as opposed to stackguard
         uintptr_t stackguard0;    // cannot move - also known to linker, libmach, runtime/cgo
@@ -174,6 +176,7 @@ struct Note {
         uintptr_t key;
 };
 
+// P - processor, a resource that is required to execute Go code.
 struct P {
         Lock __lock;
 
@@ -198,6 +201,7 @@ struct P {
         uint8_t    pad[64];
 };
 
+// M - worker thread, or machine.
 struct M {
         G*      g0;             // goroutine with scheduling stack
         void*   moreargp;       // argument pointer for more stack

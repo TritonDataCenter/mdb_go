@@ -26,6 +26,7 @@
  * mdb(1M) module for debugging Go.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/mdb_modapi.h>
 
@@ -120,8 +121,7 @@ uint32_t filetab;
 #define	GO_FUNCTABLE_OFFSET	(pclntab + sizeof (struct pctabhdr))
 #define	GO_FUNCTABLE_SIZE	(ftabsize * sizeof (go_functbl_t))
 
-#define	GO_FILETABLE_OFFSET	\
-	(GO_FUNCTABLE_OFFSET + (ftabsize * sizeof (go_functbl_t)))
+#define	GO_FILETABLE_OFFSET	(GO_FUNCTABLE_OFFSET + GO_FUNCTABLE_SIZE)
 
 #define	GO_PCLNTAB_OFFSET(x)	(pclntab + x)
 #define	GO_FILETAB_OFFSET(x)	(filetab + (x * sizeof(filetab)))
@@ -136,17 +136,22 @@ findfunc(uintptr_t addr)
 	unsigned int nf, n;
 	ssize_t len;
 
-	if (ftabsize == 0)
+	if (ftabsize == 0) {
+        mdb_warn("findfunc ftabsize == 0");
 		return (NULL);
+	}
 
 	ftbl = mdb_alloc(GO_FUNCTABLE_SIZE, UM_SLEEP);
 	len = mdb_vread(ftbl, GO_FUNCTABLE_SIZE, GO_FUNCTABLE_OFFSET);
 
-	if (len == -1)
+	if (len == -1) {
+        mdb_warn("findfunc mdb_vread failed");
 		return (NULL);
+	}
 
 	if (addr < ftbl[0].entry || addr >= ftbl[ftabsize - 1].entry) {
 		mdb_free(ftbl, GO_FUNCTABLE_SIZE);
+        mdb_warn("findfunc addr is outside of symbol table");
 		return (NULL);
 	}
 
@@ -660,7 +665,7 @@ dcmd_go_sigtab(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	int i;
 	int start, stop;
 
-	if (mdb_lookup_by_name("runtime.sigtab", &sym) != 0) {
+	if (mdb_lookup_by_name("runtime.sigtable", &sym) != 0) {
 		mdb_warn("could not find sigtab");
 		return (DCMD_ERR);
 	}
@@ -779,8 +784,10 @@ configure(void)
 	/*
 	 * Load and check pclntab header.
 	 */
-	if (mdb_lookup_by_name("pclntab", &sym) != 0)
+	if (mdb_lookup_by_name("runtime.pclntab", &sym) != 0) {
+        mdb_warn("no runtime.pclntab found\n");
 		return;
+	}
 
 	pclntab = sym.st_value;
 
